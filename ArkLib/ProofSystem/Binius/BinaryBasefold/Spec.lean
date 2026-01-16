@@ -222,6 +222,7 @@ def pSpecFoldCommit (i : Fin ℓ) : ProtocolSpec (3) :=
 def pSpecFoldRelay : ProtocolSpec (2) :=
   pSpecFold (L:=L) ++ₚ pSpecRelay
 
+@[reducible]
 -- Round-segment-level reductions
 def pSpecFoldRelaySequence (n : ℕ) :=
   ProtocolSpec.seqCompose fun (_: Fin n) ↦ pSpecFoldRelay (L:=L)
@@ -236,23 +237,28 @@ def pSpecFullNonLastBlock (bIdx : Fin (ℓ / ϑ - 1)) :=
           apply bIdx_mul_ϑ_add_i_lt_ℓ_succ bIdx (m:=0) (i:=⟨ϑ - 1, by exact ϑ_sub_one_le_self⟩)⟩)
 
 /-- The last block consists of `ϑ` fold-relay rounds -/
+@[reducible]
 def pSpecLastBlock := pSpecFoldRelaySequence (L:=L) (n:=ϑ)
 
 /-- A sequence of `(ℓ / ϑ - 1)` non-last blocks -/
+@[reducible]
 def pSpecNonLastBlocks := seqCompose fun bIdx ↦
   pSpecFullNonLastBlock 𝔽q β (ϑ:=ϑ) (h_ℓ_add_R_rate := h_ℓ_add_R_rate) bIdx
 
 -- Protocol-level reductions
 /-- The final `CoreInteraction` consists of `(ℓ / ϑ - 1)` non-last blocks and `1` last block -/
+@[reducible]
 def pSpecSumcheckFold := (pSpecNonLastBlocks 𝔽q β (ϑ:=ϑ) (h_ℓ_add_R_rate := h_ℓ_add_R_rate)) ++ₚ
   (pSpecLastBlock (L:=L) (ϑ:=ϑ))
 
 -- Complete protocol
+@[reducible]
 def pSpecCoreInteraction := (pSpecSumcheckFold 𝔽q β (ϑ:=ϑ) (h_ℓ_add_R_rate := h_ℓ_add_R_rate)) ++ₚ
   (pSpecFinalSumcheckStep (L:=L))
 
 /-- The protocol specification for the query phase.
 V sends all γ challenges v₁, ..., v_γ ← B_{ℓ+R} to P. -/
+@[reducible]
 def pSpecQuery : ProtocolSpec 1 :=
   ⟨![Direction.V_to_P],
     ![Fin γ_repetitions → sDomain 𝔽q β h_ℓ_add_R_rate 0]⟩
@@ -430,6 +436,11 @@ instance : ∀ i, OracleInterface (![↥L⦃≤ 2⦄[X], L] i)
   | ⟨n+2, h⟩ => by omega  -- Only 2 elements in the matrix
 
 /-! ## FiniteRange instances for oracle specifications -/
+
+instance : ∀ i, Fintype ((pSpecFold (L := L)).Challenge i) := by sorry
+instance : ∀ i, Inhabited ((pSpecFold (L := L)).Challenge i) := by sorry
+instance : ∀ i, ∀ j, Fintype ((pSpecCommit 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate) i).Challenge j) := by sorry
+instance : ∀ i, ∀ j, Inhabited ((pSpecCommit 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate) i).Challenge j) := by sorry
 
 /-- FiniteRange instance for pSpecFold message oracle specification.
     The messages are polynomials `L⦃≤ 2⦄[X]` and field elements `L`,

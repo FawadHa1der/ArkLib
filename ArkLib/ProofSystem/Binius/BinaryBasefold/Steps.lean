@@ -187,7 +187,8 @@ always succeeds (with probability 1) and produces valid outputs.
 -/
 theorem foldOracleReduction_perfectCompleteness (hInit : init.neverFails) (i : Fin ℓ)
   [(i : pSpecFold.ChallengeIdx) → Fintype ((pSpecFold (L := L)).Challenge i)]
-  [(i : pSpecFold.ChallengeIdx) → Inhabited ((pSpecFold (L := L)).Challenge i)] :
+  [(i : pSpecFold.ChallengeIdx) → Inhabited ((pSpecFold (L := L)).Challenge i)]
+  :
     OracleReduction.perfectCompleteness
       (pSpec := pSpecFold (L := L))
       (relIn := strictRoundRelation 𝔽q β (ϑ := ϑ) (h_ℓ_add_R_rate := h_ℓ_add_R_rate)
