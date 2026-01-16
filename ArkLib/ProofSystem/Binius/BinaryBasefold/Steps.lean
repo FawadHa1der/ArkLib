@@ -645,7 +645,7 @@ theorem commitOracleReduction_perfectCompleteness (hInit : init.neverFails) (i :
       (init := init)
       (impl := impl) := by
   -- Step 1: Unroll the 1-message reduction
-  rw [OracleReduction.unroll_1_message_reduction_perfectCompleteness (hInit := hInit)
+  rw [OracleReduction.unroll_1_message_reduction_perfectCompleteness_P_to_V (hInit := hInit)
     (hDir0 := by rfl)
     (hImplSafe := by simp only [probFailure_eq_zero_iff, IsEmpty.forall_iff, implies_true])
     (hImplSupp := by simp only [Set.fmap_eq_image, IsEmpty.forall_iff, implies_true])]
@@ -924,67 +924,6 @@ variable {R : Type} [CommSemiring R] [DecidableEq R] [SelectableType R]
 
 variable {σ : Type} {init : ProbComp σ} {impl : QueryImpl []ₒ (StateT σ ProbComp)}
 
--- omit [CharP L 2] [SelectableType L] in
--- lemma oracleFoldingConsistencyProp_relay_reindex
---     (i : Fin ℓ) (hNCR : ¬ isCommitmentRound ℓ ϑ i)
---     (challenges : Fin i.succ → L)
---     (oStmtIn : ∀ j, OracleStatement 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate)
---       ϑ i.castSucc j) :
---   oracleFoldingConsistencyProp 𝔽q β (ℓ := ℓ) (ϑ := ϑ)
---       (i := i.castSucc) (challenges := Fin.init challenges) (oStmt := oStmtIn)
---   ↔
---   oracleFoldingConsistencyProp 𝔽q β (ℓ := ℓ) (ϑ := ϑ)
---       (i := i.succ) (challenges := challenges)
---       (oStmt := mapOStmtOutRelayStep 𝔽q β (ℓ := ℓ) (ϑ := ϑ)
---         (h_ℓ_add_R_rate := h_ℓ_add_R_rate) i hNCR oStmtIn) := by
---   stop
---   have h_oracle_size_eq : toOutCodewordsCount ℓ ϑ i.castSucc = toOutCodewordsCount ℓ ϑ i.succ :=
---     h_oracle_size_eq_relay i hNCR
---   unfold oracleFoldingConsistencyProp
---   constructor
---   · -- Forward direction: i.castSucc with Fin.init challenges → i.succ with challenges
---     intro h j hj
---     -- Map j to the corresponding index in i.castSucc
---     have hj_mapped : j.val < toOutCodewordsCount ℓ ϑ i.castSucc := by omega
---     let j_orig : Fin (toOutCodewordsCount ℓ ϑ i.castSucc) := ⟨j.val, hj_mapped⟩
---     have hj_orig : j_orig.val + 1 < toOutCodewordsCount ℓ ϑ i.castSucc := by
---       simp only [j_orig, h_oracle_size_eq] at hj ⊢; omega
---     have h_spec := h j_orig hj_orig
---     -- The oracle statements match after reindexing
---     have h_oStmt_eq : (mapOStmtOutRelayStep 𝔽q β (ℓ := ℓ) (ϑ := ϑ)
---         (h_ℓ_add_R_rate := h_ℓ_add_R_rate) i hNCR oStmtIn) ⟨j.val, by omega⟩ =
---       oStmtIn ⟨j.val, hj_mapped⟩ := by
---       unfold mapOStmtOutRelayStep; simp only [h_oracle_size_eq, Fin.eta]
---     have h_oStmt_next_eq : getNextOracle 𝔽q β i.succ
---         (mapOStmtOutRelayStep 𝔽q β (ℓ := ℓ) (ϑ := ϑ)
---           (h_ℓ_add_R_rate := h_ℓ_add_R_rate) i hNCR oStmtIn) j hj =
---       getNextOracle 𝔽q β i.castSucc oStmtIn j_orig hj_orig := by
---       unfold getNextOracle mapOStmtOutRelayStep
---       simp only [h_oracle_size_eq, Fin.eta]
---       rfl
---     rw [h_oStmt_eq, h_oStmt_next_eq]
---     exact h_spec
---   · -- Backward direction: i.succ with challenges → i.castSucc with Fin.init challenges
---     intro h j hj
---     -- Map j to the corresponding index in i.succ
---     let j_new : Fin (toOutCodewordsCount ℓ ϑ i.succ) := ⟨j.val, by omega⟩
---     have hj_new : j_new.val + 1 < toOutCodewordsCount ℓ ϑ i.succ := by
---       simp only [j_new, h_oracle_size_eq] at hj ⊢; omega
---     have h_spec := h j_new hj_new
---     -- The oracle statements match after reindexing
---     have h_oStmt_eq : oStmtIn ⟨j.val, by omega⟩ =
---       (mapOStmtOutRelayStep 𝔽q β (ℓ := ℓ) (ϑ := ϑ)
---         (h_ℓ_add_R_rate := h_ℓ_add_R_rate) i hNCR oStmtIn) ⟨j.val, by omega⟩ := by
---       unfold mapOStmtOutRelayStep; simp only [h_oracle_size_eq, Fin.eta]
---     have h_oStmt_next_eq : getNextOracle 𝔽q β i.castSucc oStmtIn j hj =
---       getNextOracle 𝔽q β i.succ
---         (mapOStmtOutRelayStep 𝔽q β (ℓ := ℓ) (ϑ := ϑ)
---           (h_ℓ_add_R_rate := h_ℓ_add_R_rate) i hNCR oStmtIn) j_new hj_new := by
---       unfold getNextOracle mapOStmtOutRelayStep
---       simp only [h_oracle_size_eq, Fin.eta]
---       rfl
---     rw [h_oStmt_eq, h_oStmt_next_eq]
---     exact h_spec
 
 omit [CharP L 2] [SelectableType L] in
 lemma strictRoundRelation_relay_preserved (i : Fin ℓ)
@@ -1247,7 +1186,7 @@ theorem finalSumcheckOracleReduction_perfectCompleteness {σ : Type}
     (oracleReduction := finalSumcheckOracleReduction 𝔽q β (ϑ := ϑ)
       (h_ℓ_add_R_rate := h_ℓ_add_R_rate) (𝓑 := 𝓑)) (init := init) (impl := impl) := by
   -- Step 1: Unroll the 2-message reduction to convert from probability to logic
-  rw [OracleReduction.unroll_1_message_reduction_perfectCompleteness (hInit := hInit)
+  rw [OracleReduction.unroll_1_message_reduction_perfectCompleteness_P_to_V (hInit := hInit)
     (hDir0 := by rfl)
     (hImplSafe := by simp only [probFailure_eq_zero_iff, IsEmpty.forall_iff, implies_true])
     (hImplSupp := by simp only [Set.fmap_eq_image, IsEmpty.forall_iff, implies_true])]

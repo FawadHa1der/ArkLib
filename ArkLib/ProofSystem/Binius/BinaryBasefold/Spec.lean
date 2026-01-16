@@ -321,6 +321,13 @@ instance : ∀ i, OracleInterface ((pSpecCoreInteraction 𝔽q β (ϑ:=ϑ)
 instance : ∀ i, OracleInterface ((pSpecQuery 𝔽q β γ_repetitions
   (h_ℓ_add_R_rate := h_ℓ_add_R_rate)).Message i) := fun _ => OracleInterface.instDefault
 
+instance : ∀ i, OracleInterface ((pSpecQuery 𝔽q β γ_repetitions
+  (h_ℓ_add_R_rate := h_ℓ_add_R_rate)).Challenge i) := fun _ => OracleInterface.instDefault
+
+instance : ∀ i, Fintype ((pSpecQuery 𝔽q β γ_repetitions (h_ℓ_add_R_rate := h_ℓ_add_R_rate)).Challenge i) := by sorry
+
+instance : ∀ i, Inhabited ((pSpecQuery 𝔽q β γ_repetitions (h_ℓ_add_R_rate := h_ℓ_add_R_rate)).Challenge i) := by sorry
+
 instance : ∀ j, OracleInterface ((fullPSpec 𝔽q β γ_repetitions (ϑ:=ϑ)
   (h_ℓ_add_R_rate := h_ℓ_add_R_rate)).Message j) := instOracleInterfaceMessageAppend
 
@@ -456,8 +463,12 @@ instance : ∀ i, Fintype ((pSpecFinalSumcheckStep (L:=L)).Challenge i) := by so
 
 instance instFiniteRangePSpecFinalSumcheckStepChallenge : [pSpecFinalSumcheckStep (L := L).Challenge]ₒ.FiniteRange := by sorry
 
+instance instFiniteRangePSpecQueryChallenge : [(pSpecQuery 𝔽q β γ_repetitions (h_ℓ_add_R_rate := h_ℓ_add_R_rate)).Challenge]ₒ.FiniteRange := by sorry
+
 instance instFiniteRangeOracleStatementFinLast : [fun j => OracleStatement 𝔽q β (ϑ := ϑ) (h_ℓ_add_R_rate := h_ℓ_add_R_rate)
       (Fin.last ℓ) j]ₒ.FiniteRange := by sorry
+
+instance instFiniteRangePSpecQueryMessage : [(pSpecQuery 𝔽q β γ_repetitions (h_ℓ_add_R_rate := h_ℓ_add_R_rate)).Message]ₒ.FiniteRange := by sorry
 
 instance instFiniteRangePSpecFinalSumcheckStepMessage : [(pSpecFinalSumcheckStep (L := L)).Message]ₒ.FiniteRange := by sorry
 

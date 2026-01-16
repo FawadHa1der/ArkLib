@@ -21,9 +21,10 @@ management automatically, reducing boilerplate in protocol-specific completeness
   routing, and state peeling.
 - `unroll_2_message_reduction_perfectCompleteness`: A specific lemma for 2-message protocols
   (e.g., P→V, V→P), deriving the explicit step-by-step form from the generic theorem.
-- `unroll_1_message_reduction_perfectCompleteness`: A specific lemma for 1-message protocols
+- `unroll_1_message_reduction_perfectCompleteness_P_to_V`: A specific lemma for 1-message protocols
   (e.g., P→V only), useful for commitment rounds where the prover just submits data.
-
+- `unroll_1_message_reduction_perfectCompleteness_V_to_P`: A specific lemma for 1-message protocols
+  (e.g., V→P only), useful for query phase where the verifier just sends γ challenges.
 ## Usage
 
 These lemmas are designed to be applied in protocol-specific completeness proofs. Instead of
@@ -646,7 +647,7 @@ The strategy is:
 2. Unfold `runToRound (Fin.last 1)` using `Prover.runToRound` definition
 3. Simplify to get the explicit 2-step form (send message, output)
 -/
-theorem unroll_1_message_reduction_perfectCompleteness
+theorem unroll_1_message_reduction_perfectCompleteness_P_to_V
     (reduction : OracleReduction oSpec StmtIn OStmtIn WitIn StmtOut OStmtOut WitOut pSpec)
     (relIn : Set ((StmtIn × ∀ i, OStmtIn i) × WitIn))
     (relOut : Set ((StmtOut × ∀ i, OStmtOut i) × WitOut))
@@ -700,6 +701,72 @@ theorem unroll_1_message_reduction_perfectCompleteness
   fin_cases i
   · rfl
 
+/-- **Derive 1-message V→P version from generic n-message theorem**
+
+This theorem is for 1-message protocols where the verifier sends a challenge to the prover
+(e.g., query phase where V sends γ challenges).
+
+The strategy is:
+1. Apply the generic theorem for n = 1
+2. Unfold `runToRound (Fin.last 1)` using `Prover.runToRound` definition
+3. Simplify to get the explicit form (receive challenge, output)
+-/
+theorem unroll_1_message_reduction_perfectCompleteness_V_to_P
+    (reduction : OracleReduction oSpec StmtIn OStmtIn WitIn StmtOut OStmtOut WitOut pSpec)
+    (relIn : Set ((StmtIn × ∀ i, OStmtIn i) × WitIn))
+    (relOut : Set ((StmtOut × ∀ i, OStmtOut i) × WitOut))
+    (init : ProbComp σ) (impl : QueryImpl oSpec (StateT σ ProbComp)) (hInit : init.neverFails)
+    (hDir0 : pSpec.dir 0 = .V_to_P)
+    (hImplSafe : ∀ {β} (q : OracleQuery oSpec β) s, [⊥ | (impl.impl q).run s] = 0)
+    (hImplSupp : ∀ {β} (q : OracleQuery oSpec β) s,
+      Prod.fst <$> ((impl.impl q).run s).support = (liftQuery q).support) :
+    OracleReduction.perfectCompleteness init impl relIn relOut reduction ↔
+    ∀ (stmtIn : StmtIn) (oStmtIn : ∀ i, OStmtIn i) (witIn : WitIn),
+      ((stmtIn, oStmtIn), witIn) ∈ relIn →
+      [fun ((prvStmt, prvOStmt), (verStmt, verOStmt), witOut) =>
+          ((verStmt, verOStmt), witOut) ∈ relOut ∧ prvStmt = verStmt ∧ prvOStmt = verOStmt
+      | do
+          let challenge ← liftComp (pSpec.getChallenge ⟨0, hDir0⟩) (oSpec ++ₒ [pSpec.Challenge]ₒ)
+          let receiveChallengeFn ← liftComp
+            (reduction.prover.receiveChallenge ⟨0, hDir0⟩
+              (reduction.prover.input ((stmtIn, oStmtIn), witIn)))
+            (oSpec ++ₒ [pSpec.Challenge]ₒ)
+          let state1 := receiveChallengeFn challenge
+          let ⟨⟨prvStmtOut, prvOStmtOut⟩, witOut⟩ ← liftComp (reduction.prover.output state1)
+            (oSpec ++ₒ [pSpec.Challenge]ₒ)
+          let transcript : pSpec.FullTranscript := ProtocolSpec.FullTranscript.mk1 challenge
+          let verifierStmtOut ← liftComp
+            (reduction.verifier.toVerifier.verify (stmtIn, oStmtIn) transcript)
+            (oSpec ++ₒ [pSpec.Challenge]ₒ)
+          pure ((prvStmtOut, prvOStmtOut), verifierStmtOut, witOut)
+      ] = 1 := by
+  -- 1. Apply the generic theorem for n = 1
+  rw [unroll_n_message_reduction_perfectCompleteness (n := 1) (reduction := reduction)
+    relIn relOut init impl hInit hImplSafe hImplSupp]
+  -- 2. Peel off the quantifiers to get to the ProbComp execution
+  apply forall_congr'; intro stmtIn
+  apply forall_congr'; intro oStmtIn
+  apply forall_congr'; intro witIn
+  apply imp_congr_right; intro h_relIn
+  -- 3. Unfold Prover.runToRound
+  simp only [Prover.runToRound]
+  have h_last_eq_one : (Fin.last 1) = 1 := rfl
+  -- 4. Set the limit to 1
+  rw! (castMode := .all) [h_last_eq_one]
+  -- 5. Focus on the LHS (Generic Execution)
+  conv_lhs =>
+    rw [Fin.induction_one'] -- Reduces induction 0 to pure init
+    rw [Prover.processRound_V_to_P (h := hDir0)]
+    simp only
+  dsimp only [ChallengeIdx, Fin.isValue, Fin.castSucc_zero, Fin.succ_zero_eq_one, Challenge,
+    liftM_eq_liftComp, Nat.reduceAdd, Fin.reduceLast]
+  simp only [bind_assoc, pure_bind]
+  congr!
+  unfold FullTranscript.mk1
+  funext i
+  fin_cases i
+  · rfl
+
 end OneMessageProtocol
 
 section TwoMessageProtocol
@@ -711,7 +778,7 @@ variable {oSpec : OracleSpec ι} [oSpec.FiniteRange] {StmtIn WitIn StmtOut WitOu
   [∀ i, Fintype (pSpec.Challenge i)] [∀ i, Inhabited (pSpec.Challenge i)]
   [∀ i, OracleInterface (pSpec.Message i)]
 
-/-- **Derive 2-message version from generic n-message theorem**
+/-- **Derive 2-message version from generic n-message theorem**: [P->V, V->P]
 
 This theorem tests whether `unroll_n_message_reduction_perfectCompleteness` is actually
 useful by deriving the 2-message specific version from it. If this works, it validates
@@ -742,9 +809,9 @@ theorem unroll_2_message_reduction_perfectCompleteness
               (reduction.prover.input ((stmtIn, oStmtIn), witIn)))
             (oSpec ++ₒ [pSpec.Challenge]ₒ)
           let r1 ← liftComp (pSpec.getChallenge ⟨1, hDir1⟩) (oSpec ++ₒ [pSpec.Challenge]ₒ)
-          let recvFn ← liftComp (reduction.prover.receiveChallenge ⟨1, hDir1⟩ state1)
+          let receiveChallengeFn ← liftComp (reduction.prover.receiveChallenge ⟨1, hDir1⟩ state1)
             (oSpec ++ₒ [pSpec.Challenge]ₒ)
-          let state2 := recvFn r1
+          let state2 := receiveChallengeFn r1
           let ⟨⟨prvStmtOut, prvOStmtOut⟩, witOut⟩ ← liftComp (reduction.prover.output state2)
             (oSpec ++ₒ [pSpec.Challenge]ₒ)
           let transcript := ProtocolSpec.FullTranscript.mk2 msg0 r1

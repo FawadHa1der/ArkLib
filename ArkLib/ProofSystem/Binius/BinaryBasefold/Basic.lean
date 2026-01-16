@@ -290,6 +290,7 @@ lemma toOutCodewordsCount_i_le_of_succ (i : Fin ℓ) :
   · omega
   · omega
 
+@[simp]
 lemma toOutCodewordsCount_last ℓ ϑ : toOutCodewordsCount ℓ ϑ (Fin.last ℓ) = ℓ / ϑ := by
   unfold toOutCodewordsCount
   simp only [Fin.val_last, lt_self_iff_false, ↓reduceIte, add_zero]
@@ -608,9 +609,6 @@ end OracleFrontierIndex
 
 section SumcheckOperations
 
-abbrev MultilinearPoly (L : Type) [CommSemiring L] (ℓ : ℕ) := L⦃≤ 1⦄[X Fin ℓ]
-abbrev MultiquadraticPoly (L : Type) [CommSemiring L] (ℓ : ℕ) := L⦃≤ 2⦄[X Fin ℓ]
-
 /-- We treat the multiplier poly as a blackbox for protocol abstraction.
 For example, in Binary Basefold it's `eqTilde(r₀, .., r_{ℓ-1}, X₀, .., X_{ℓ-1})` -/
 structure SumcheckMultiplierParam (L : Type) [CommRing L] (ℓ : ℕ) (Context : Type := Unit) where
@@ -774,6 +772,22 @@ def OracleStatement (ϑ : ℕ) [NeZero ϑ] (i : Fin (ℓ + 1)) :
   by
     let sDomainIdx := oraclePositionToDomainIndex ℓ ϑ j
     exact (sDomain 𝔽q β h_ℓ_add_R_rate) ⟨sDomainIdx, by omega⟩ → L
+
+omit [CharP L 2] [DecidableEq 𝔽q] hF₂ h_β₀_eq_1 [NeZero 𝓡] hdiv in
+/-- **Oracle Access Congruence**:
+Proves equality of oracle evaluations `oStmtIn j x = oStmtIn j' x'` -/
+lemma OracleStatement.oracle_eval_congr
+    -- Context: The oracle collection for a fixed round (usually Fin.last ℓ)
+    {i : Fin (ℓ + 1)}
+    (oStmtIn : ∀ j, OracleStatement 𝔽q β (ϑ := ϑ) (h_ℓ_add_R_rate := h_ℓ_add_R_rate) i j)
+    -- 1. Outer Index Equality (j = j')
+    {j j' : Fin (toOutCodewordsCount ℓ ϑ i)} (h_j : j = j')
+    -- 2. Inner Point Equality (x = x')
+    -- Note: x and x' have different types because they depend on j and j'
+    {x : sDomain 𝔽q β h_ℓ_add_R_rate ⟨oraclePositionToDomainIndex ℓ ϑ (i := i) j, by omega⟩}
+    {x' : sDomain 𝔽q β h_ℓ_add_R_rate ⟨oraclePositionToDomainIndex ℓ ϑ (i := i) j', by omega⟩}
+    (h_x : x = cast (by rw [h_j]) x') : oStmtIn j x = oStmtIn j' x' := by
+  subst h_j; simp only [cast_eq] at h_x; subst h_x; rfl
 
 def mapOStmtOutRelayStep (i : Fin ℓ) (hNCR : ¬ isCommitmentRound ℓ ϑ i)
     (oStmt : ∀ j, OracleStatement 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate) ϑ i.castSucc j) :
@@ -998,13 +1012,12 @@ end SnocOracleHelpers
 /-- Extract the first oracle f^(0) from oracle statements -/
 def getFirstOracle {oracleFrontierIdx : Fin (ℓ + 1)}
     (oStmt : (∀ j, OracleStatement 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate) ϑ oracleFrontierIdx j)) :
-    sDomain 𝔽q β h_ℓ_add_R_rate 0 → L := by
+    sDomain 𝔽q β h_ℓ_add_R_rate ⟨0, by omega⟩→ L :=
   let rawf₀ := oStmt ⟨0, by
     letI := instNeZeroNatToOutCodewordsCount ℓ ϑ oracleFrontierIdx
     exact pos_of_neZero (toOutCodewordsCount ℓ ϑ oracleFrontierIdx)
   ⟩
-  simp only [OracleStatement, zero_mul, Fin.mk_zero'] at rawf₀
-  exact rawf₀
+  fun y => rawf₀ (cast (by simp only [Fin.mk_zero', zero_mul]) y)
 
 def getLastOracle {oracleFrontierIdx : Fin (ℓ + 1)} {destIdx : Fin r}
     (h_destIdx : destIdx.val = getLastOracleDomainIndex ℓ ϑ oracleFrontierIdx)

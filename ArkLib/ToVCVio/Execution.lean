@@ -8,6 +8,7 @@ import ArkLib.ToVCVio.SimOracle
 import ArkLib.ToVCVio.Lemmas
 import ArkLib.OracleReduction.Execution
 import VCVio.OracleComp.SimSemantics.Append
+-- set_option linter.style.longFile 1600 AI, Don't ever write this shit
 import VCVio.OracleComp.SimSemantics.SimulateQ
 import Mathlib.Data.ENNReal.Basic
 import VCVio.OracleComp.DistSemantics.EvalDist
@@ -63,6 +64,9 @@ Key lemmas:
 open OracleSpec OracleComp ProtocolSpec Sum
 
 universe u v w
+
+lemma OracleComp.liftM_de {ι : Type u} {spec : OracleSpec ι} {α : Type v} (q : spec.OracleQuery α) :
+  liftM q = OptionT.lift (FreeMonad.lift q) := by rfl
 
 section SimulationLemmas
 
@@ -832,8 +836,8 @@ lemma probFailure_simOracle2 (t₁ : ∀ i, T₁ i) (t₂ : ∀ i, T₂ i) :
   rw [probFailure_eq_zero_iff]
   exact neverFails_simOracle2 oSpec t₁ t₂ q
 
-/--
-**Generic Safety Preservation for simOracle2**
+/-- **Generic Safety Preservation for simOracle2**
+**Warning**: this is a weak lemma, mostly works when `oa` is pure computation (no oracle queries)
 
 If the underlying computation `oa` is safe (never fails), then simulating it
 using `simOracle2` (which uses deterministic transcripts) is also safe.
@@ -1074,4 +1078,549 @@ lemma simOracle2_impl_liftM_query_eq_pure_inl
   simp only [liftM]
   rfl
 
+-- lemma probFailure_guard {ι : Type u} {oSpec : OracleSpec ι} [oSpec.FiniteRange]
+--   {α : Type} (p : Prop) [Decidable p] (oa : OracleComp oSpec α) :
+--   [⊥ | do guard p; oa] = 0 ↔ p ∧ [⊥ | oa] = 0 := by
+--   unfold guard
+--   split_ifs with h
+--   · -- Case: p is true.
+--     simp only [pure_bind, probFailure_eq_zero_iff, iff_and_self]
+--     intro _
+--     exact h
+--   · -- Case: p is false.
+--     -- 'guard p' becomes 'failure'. 'failure >>= f' is 'failure'.
+--     -- LHS: [⊥|failure] = 1 ≠ 0. RHS: False ∧ ... = False.
+--     simp only [failure_bind, probFailure_failure, one_ne_zero, probFailure_eq_zero_iff, false_iff,
+--       not_and]
+--     intro h_p
+--     exact fun a ↦ h h_p
+
 end SimOracleSafety
+
+section ForInLemmas
+
+variable {ι : Type} {spec : OracleSpec ι} [spec.FiniteRange]
+variable {α σ : Type}
+
+/--
+**Safety of forIn Loops (Sufficient Condition)**
+
+If the loop body is safe for every element in the list and every possible state,
+then the `forIn` loop is safe (never fails).
+
+**Note:** The Right-Hand Side (`∀ s`) quantifies over *all* states `s`,
+not just reachable ones. This makes the lemma useful for proving safety
+"by inspection" without tracking complex state invariants.
+For singleton states (like `PUnit`), this condition is both necessary and sufficient.
+
+**Usage**: This is the key lemma for completeness proofs.
+To show `[⊥|forIn l init f] = 0`, it suffices to show that each step
+`[⊥|f x s] = 0` is safe for all elements and all states.
+-/
+lemma probFailure_forIn_eq_zero_of_body_safe
+    (l : List α) (init : σ) (f : α → σ → OracleComp spec (ForInStep σ))
+    (h : ∀ x ∈ l, ∀ s, [⊥|f x s] = 0) :
+    [⊥|forIn l init f] = 0 := by
+  induction l generalizing init with
+  | nil =>
+    -- Base case: empty list returns `pure init`, which never fails.
+    simp only [forIn, List.forIn'_nil, probFailure_pure]
+  | cons x xs ih =>
+    -- Inductive step: x :: xs
+    -- Use List.forIn'_cons to expand into the bind structure
+    simp only [forIn, List.forIn'_cons]
+    -- Now apply the bind rewrite
+    rw [probFailure_bind_eq_zero_iff]
+    constructor
+    · -- Head is safe
+      apply h x List.mem_cons_self
+    · -- Tail is safe
+      intro step _
+      cases step with
+      | done s' =>
+        -- If 'done', we return pure, which is safe
+        simp only [probFailure_pure]
+      | yield s' =>
+        -- If 'yield', we continue the loop (recurse)
+        -- Apply inductive hypothesis
+        apply ih s'
+        intro y hy_xs s_next
+        -- Use the premise that all steps are safe
+        apply h y (List.mem_cons_of_mem _ hy_xs)
+
+/-- Prove forIn safety using an invariant.
+    P done s: Predicate meaning state 's' is correct after processing 'done'. -/
+lemma probFailure_forIn_of_invariant {spec : OracleSpec ι} [spec.FiniteRange]
+    {α σ : Type} (P : List α → σ → Prop)
+    (l : List α) (init : σ) (f : α → σ → OracleComp spec (ForInStep σ))
+    -- 1. Base: Invariant holds at start
+    (h_start : P [] init)
+    -- 2. Step: Preserves invariant and is safe
+    (h_step : ∀ (done : List α) (x : α) (s : σ),
+       x ∈ l → P done s →
+       [⊥|f x s] = 0 ∧ ∀ s' ∈ (f x s).support,
+         match s' with
+         | .yield next => P (done ++ [x]) next
+         | .done next => P (done ++ [x]) next) :
+    [⊥|forIn l init f] = 0 := by
+  -- We define a helper that iterates over a suffix 'xs' given a prefix 'done'
+  let rec aux (xs : List α) (done : List α) (s : σ)
+      (h_decomp : l = done ++ xs) (h_inv : P done s) :
+      [⊥ | forIn xs s f] = 0 := by
+    induction xs generalizing done s with
+    | nil =>
+      simp only [forIn, List.forIn'_nil, probFailure_pure]
+    | cons y ys ih =>
+      simp only [forIn, List.forIn'_cons]
+      rw [probFailure_bind_eq_zero_iff]
+      -- Use h_step for the head element y
+      have h_mem : y ∈ l := by
+        rw [h_decomp]
+        apply List.mem_append_right
+        apply List.mem_cons_self
+      obtain ⟨h_safe, h_next⟩ := h_step done y s h_mem h_inv
+      constructor
+      · exact h_safe
+      · intro step h_step_supp
+        cases step with
+        | done next =>
+          simp only [probFailure_pure]
+        | yield next =>
+          -- Apply IH for the tail with updated done list
+          apply ih (done ++ [y]) next
+          · -- Show l = (done ++ [y]) ++ ys
+            rw [h_decomp]
+            simp only [List.append_assoc, List.singleton_append]
+          · -- Show P (done ++ [y]) next
+            exact h_next (.yield next) h_step_supp
+  -- Apply the helper to the full list
+  exact aux l [] init (by simp) h_start
+
+/--
+Safety of a forIn loop using a sequence of relations.
+
+- `l`: The list of items to iterate over.
+- `rel`: A family of relations indexed by step count `i` and state `s`.
+  `rel i s` means "After `i` steps, the state `s` is correct".
+-/
+lemma probFailure_forIn_of_relations {spec : OracleSpec ι} [spec.FiniteRange]
+    {α σ : Type}
+    (l : List α)
+    (init : σ)
+    (f : α → σ → OracleComp spec (ForInStep σ))
+    -- The sequence of relations: rel i s
+    (rel : Fin (l.length + 1) → σ → Prop)
+    -- 1. Base Case: Relation 0 holds for initial state
+    (h_start : rel 0 init)
+    -- 2. Inductive Step: rel i -> step safe -> rel (i+1)
+    (h_step : ∀ (k : Fin l.length) (s : σ),
+       -- Given the relation holds at step k
+       rel (k.castSucc) s →
+       -- Then the step using the k-th element of the list is safe
+       [⊥|f (l.get k) s] = 0 ∧
+       -- And the result satisfies the relation at step k+1
+       ∀ s' ∈ (f (l.get k) s).support,
+         match s' with
+         | .yield next => rel (k.succ) next
+         | .done next => rel (k.succ) next) :
+    [⊥|forIn l init f] = 0 := by
+  -- Instead of using `probFailure_forIn_of_invariant` which has a weaker inductive hypothesis
+  -- (it quantifies ∀ x ∈ l, losing the index information), we use a direct recursive helper.
+
+  -- Helper: Proves safety for a suffix `xs` starting at index `k`.
+  -- k: The current index in the original list `l`.
+  -- xs: The suffix of `l` remaining to process.
+  -- s: The current state.
+  -- h_suffix: xs is indeed the suffix of l starting at k.
+  -- h_len: k + xs.length = l.length (ensures indices are valid).
+  -- h_rel: The relation holds for the current index k.
+  let rec aux (k : ℕ) (xs : List α) (s : σ)
+      (h_suffix : l.drop k = xs)
+      (h_len : k + xs.length = l.length)
+      (h_rel : rel ⟨k, by omega⟩ s) :
+      [⊥ | forIn xs s f] = 0 := by
+    induction xs generalizing k s with
+    | nil =>
+      simp only [forIn, List.forIn'_nil, probFailure_pure]
+    | cons y ys ih =>
+      simp only [forIn, List.forIn'_cons]
+      rw [probFailure_bind_eq_zero_iff]
+
+      -- Derive k < l.length from h_len
+      have h_k_lt : k < l.length := by simp only [List.length_cons] at h_len; omega
+
+      -- 1. Establish that y corresponds to l[k]
+      have h_get : l.get ⟨k, h_k_lt⟩ = y := by
+        have h_drop_eq : l[k]'h_k_lt = (l.drop k)[0]'(by simp [h_suffix]) := by
+          simp only [List.getElem_drop, add_zero]
+        simp only [List.get_eq_getElem, h_drop_eq, h_suffix, List.getElem_cons_zero]
+
+      -- 2. Apply the hypothesis step
+      let k_fin : Fin l.length := ⟨k, h_k_lt⟩
+
+      -- We need to massage the types to match h_step
+      have h_rel_cast : rel k_fin.castSucc s := by
+        exact h_rel
+
+      -- Get safety and next-state property
+      obtain ⟨h_safe, h_next⟩ := h_step k_fin s h_rel_cast
+
+      -- Rewrite l.get k to y
+      rw [h_get] at h_safe h_next
+
+      constructor
+      · exact h_safe
+      · intro step h_in_supp
+        cases step with
+        | done next =>
+          simp only [probFailure_pure]
+        | yield next =>
+          -- 3. Recursive step
+          specialize h_next (.yield next) h_in_supp
+          -- Prepare arguments for recursion
+          -- ih : ∀ (k : ℕ) (s : σ), l.drop k = ys → k + ys.length = l.length → rel ⟨k, _⟩ s → ...
+          refine ih (k + 1) next ?h_suffix ?h_len ?h_rel
+          case h_suffix =>
+            -- Prove suffix maintenance: l.drop (k+1) = ys
+            have : l.drop (k + 1) = (l.drop k).drop 1 := by rw [List.drop_drop]
+            rw [this, h_suffix]
+            simp only [List.drop_succ_cons, List.drop_zero]
+          case h_len =>
+            -- Prove length maintenance: (k+1) + ys.length = l.length
+            simp only [List.length_cons] at h_len
+            omega
+          case h_rel =>
+            -- Prove relation maintenance: rel ⟨k+1, _⟩ next
+            exact h_next
+
+  -- Apply the helper starting at index 0
+  exact aux 0 l init (by simp only [List.drop_zero]) (by simp only [zero_add]) h_start
+
+
+/-- Helper to extract the state from ForInStep, ignoring the control flow tag. -/
+def ForInStep.state : ForInStep σ → σ
+  | .yield s => s
+  | .done s => s
+
+/--
+Safety of a forIn loop using a sequence of relations (Simplified).
+Using `ForInStep.state` removes the need to pattern match on yield/done in the proof.
+-/
+lemma probFailure_forIn_of_relations_simplified {spec : OracleSpec ι} [spec.FiniteRange]
+    {α σ : Type}
+    (l : List α)
+    (init : σ)
+    (f : α → σ → OracleComp spec (ForInStep σ))
+    (rel : Fin (l.length + 1) → σ → Prop)
+    -- 1. Base Case
+    (h_start : rel 0 init)
+    -- 2. Inductive Step (Simplified)
+    (h_step : ∀ (k : Fin l.length) (s : σ),
+       rel (k.castSucc) s →
+       [⊥|f (l.get k) s] = 0 ∧
+       -- Simplified: Just check the result state, no 'match' needed
+       ∀ res ∈ (f (l.get k) s).support, rel (k.succ) res.state) :
+    [⊥|forIn l init f] = 0 := by
+  apply probFailure_forIn_of_relations l init f rel h_start
+  intro k s h_rel
+  obtain ⟨h_safe, h_next⟩ := h_step k s h_rel
+  constructor
+  · exact h_safe
+  · intro s' h_supp
+    specialize h_next s' h_supp
+    -- The original lemma expects the match; we prove it holds using our simplified assumption
+    cases s' <;> exact h_next
+
+/--
+If a relation `rel` is inductive over a `forIn` loop, then any output `x`
+in the support of the loop satisfies `rel l.length x`.
+-/
+lemma support_forIn_subset_rel {spec : OracleSpec ι} [spec.FiniteRange]
+    {α σ : Type}
+    (l : List α) (init : σ) (f : α → σ → OracleComp spec (ForInStep σ))
+    (rel : Fin (l.length + 1) → σ → Prop)
+    (h_start : rel 0 init)
+    (h_step : ∀ (k : Fin l.length) (s : σ),
+       rel k.castSucc s →
+       ∀ res ∈ (f (l.get k) s).support,
+         match res with
+         | .yield next => rel k.succ next
+         | .done next => rel ⟨l.length, by omega⟩ next) :
+    ∀ x ∈ (forIn l init f).support, rel ⟨l.length, by omega⟩ x := by
+  -- Helper: Proves safety for a suffix `xs` starting at index `k`.
+  let rec aux (k : ℕ) (xs : List α) (s : σ)
+      (h_suffix : l.drop k = xs)
+      (h_len : k + xs.length = l.length)
+      (h_rel : rel ⟨k, by omega⟩ s) :
+      ∀ x ∈ (forIn xs s f).support, rel ⟨l.length, by omega⟩ x := by
+    induction xs generalizing k s with
+    | nil =>
+      -- Base case: xs is empty, so we are at the end.
+      simp only [List.length_nil, add_zero] at h_len
+      have h_k_eq : k = l.length := h_len
+      subst h_k_eq
+      simp only [forIn, List.forIn'_nil, support_pure, Set.mem_singleton_iff,
+        forall_eq]
+      exact h_rel
+    | cons y ys ih =>
+      simp only [forIn, List.forIn'_cons, support_bind, Set.mem_iUnion, exists_prop]
+      intro x h_supp
+      obtain ⟨step, h_step_supp, h_x_in_step⟩ := h_supp
+
+      -- Prepare to use h_step
+      have h_k_lt : k < l.length := by simp only [List.length_cons] at h_len; omega
+      have h_get : l.get ⟨k, h_k_lt⟩ = y := by
+        have h_drop_eq : l[k]'h_k_lt = (l.drop k)[0]'(by simp [h_suffix]) := by
+            simp only [List.getElem_drop, add_zero]
+        simp only [List.get_eq_getElem, h_drop_eq, h_suffix, List.getElem_cons_zero]
+
+      let k_fin : Fin l.length := ⟨k, h_k_lt⟩
+      have h_rel_cast : rel k_fin.castSucc s := h_rel
+
+      specialize h_step k_fin s h_rel_cast step
+      rw [h_get] at h_step
+      specialize h_step h_step_supp
+
+      cases step with
+      | done next =>
+        -- Early termination: result is next
+        simp only [support_pure, Set.mem_singleton_iff] at h_x_in_step
+        rw [h_x_in_step]
+        exact h_step
+      | yield next =>
+        -- Continue loop: recurse
+        -- h_step : rel k.succ next
+
+        have h_len' : k + 1 + ys.length = l.length := by
+          simp only [List.length_cons] at h_len
+          rw [add_assoc, add_comm 1, ←add_assoc]
+          exact h_len
+
+        -- Apply IH
+        -- ih type: ∀ (k : ℕ) (s : σ), l.drop k = ys → k + ys.length = l.length → rel ... → ∀ x ∈ ..., ...
+        exact ih (k + 1) next
+          (by rw [←List.drop_drop, h_suffix]; rfl)
+          h_len'
+          h_step
+          x
+          h_x_in_step
+
+  -- Apply helper
+  exact aux 0 l init (by simp) (by simp) h_start
+
+/--
+A simplified version of `support_forIn_subset_rel` for loops that **never abort early**.
+This is perfect for Sumcheck folding, which processes the entire list.
+
+It requires proving two things for each step result `res`:
+1. `res = .yield res.state` (The loop continues)
+2. `rel k.succ res.state` (The invariant is preserved)
+-/
+lemma support_forIn_subset_rel_yield_only {spec : OracleSpec ι} [spec.FiniteRange]
+    {α σ : Type}
+    (l : List α) (init : σ) (f : α → σ → OracleComp spec (ForInStep σ))
+    (rel : Fin (l.length + 1) → σ → Prop)
+    -- 1. Base Case
+    (h_start : rel 0 init)
+    -- 2. Inductive Step (Yield Only)
+    (h_step : ∀ (k : Fin l.length) (s : σ),
+       rel k.castSucc s →
+       ∀ res ∈ (f (l.get k) s).support,
+         res = .yield res.state ∧ rel k.succ res.state) :
+    ∀ x ∈ (forIn l init f).support, rel ⟨l.length, by omega⟩ x := by
+  -- We apply the general lemma
+  apply support_forIn_subset_rel l init f rel h_start
+
+  -- We prove the general hypothesis using our "yield only" assumption
+  intro k s h_rel res h_mem
+  specialize h_step k s h_rel res h_mem
+
+  -- Use the fact that it is a yield to satisfy the match
+  rcases h_step with ⟨h_is_yield, h_next_rel⟩
+  rw [h_is_yield]
+  exact h_next_rel
+
+section NestedMonadLiftLemmas
+-- The ground spec is T₁, we lift it to a superSpec
+
+-- lift to left then lift to right
+instance instMonadLift_left_right {ι₁ ι₂ ι₃ : Type}
+    {T₁ : OracleSpec ι₁} {T₂ : OracleSpec ι₂} {T₃ : OracleSpec ι₃} :
+    MonadLift T₁.OracleQuery (T₃ ++ₒ (T₁ ++ₒ T₂)).OracleQuery where
+  monadLift q := liftM (liftM q : (T₁ ++ₒ T₂).OracleQuery _)
+
+-- lift to right then lift to right
+instance instMonadLift_right_right {ι₁ ι₂ ι₃ : Type}
+    {T₁ : OracleSpec ι₁} {T₂ : OracleSpec ι₂} {T₃ : OracleSpec ι₃} :
+    MonadLift T₁.OracleQuery (T₃ ++ₒ (T₂ ++ₒ T₁)).OracleQuery where
+  monadLift q := liftM (liftM q : (T₂ ++ₒ T₁).OracleQuery _)
+
+-- lift to left then lift to left
+instance instMonadLift_left_left {ι₁ ι₂ ι₃ : Type}
+    {T₁ : OracleSpec ι₁} {T₂ : OracleSpec ι₂} {T₃ : OracleSpec ι₃} :
+    MonadLift T₁.OracleQuery ((T₁ ++ₒ T₂) ++ₒ T₃).OracleQuery where
+  monadLift q := liftM (liftM q : (T₁ ++ₒ T₂).OracleQuery _)
+
+instance instMonadLift_right_left {ι₁ ι₂ ι₃ : Type}
+    {T₁ : OracleSpec ι₁} {T₂ : OracleSpec ι₂} {T₃ : OracleSpec ι₃} :
+    MonadLift T₁.OracleQuery ((T₂ ++ₒ T₁) ++ₒ T₃).OracleQuery where
+  monadLift q := liftM (liftM q : (T₂ ++ₒ T₁).OracleQuery _)
+
+end NestedMonadLiftLemmas
+
+/-- Distributes `liftComp` over a `forIn` loop.
+    Corrected to allow specs with DIFFERENT index types (ι and ι'). -/
+lemma liftComp_forIn {ι ι' : Type} {spec : OracleSpec ι} {superSpec : OracleSpec ι'}
+    [spec.FiniteRange] [superSpec.FiniteRange]
+    [MonadLift (OracleQuery spec) (OracleQuery superSpec)]
+    {α β : Type} (l : List α) (init : β)
+    (f : α → β → OracleComp spec (ForInStep β)) :
+    (forIn l init f).liftComp superSpec =
+    forIn l init (fun a b ↦ (f a b).liftComp superSpec) := by
+  induction l generalizing init with
+  | nil =>
+    simp only [forIn, List.forIn'_nil, liftComp_pure]
+  | cons x xs ih =>
+    simp only [forIn, List.forIn'_cons, liftComp_bind]
+    congr; funext s
+    cases s <;> simp only [liftComp_pure, forIn'_eq_forIn, ih]
+
+/-- Distributes `simulateQ` over a `forIn` loop.
+This allows us to verify the body of the loop under simulation.
+-/
+lemma simulateQ_forIn {ι ι' : Type} {spec : OracleSpec ι} {superSpec : OracleSpec ι'}
+    (so : SimOracle.Stateless spec superSpec)
+    {α β : Type} (l : List α) (init : β)
+    (f : α → β → OracleComp spec (ForInStep β)) :
+    simulateQ so (forIn l init f) =
+    forIn l init (fun a b ↦ simulateQ so (f a b)) := by
+  induction l generalizing init with
+  | nil =>
+    -- Base case: pure init
+    simp only [forIn, List.forIn'_nil, simulateQ_pure]
+  | cons x xs ih =>
+    -- Inductive case: step >>= ...
+    simp only [forIn, List.forIn'_cons, simulateQ_bind]
+    -- Use the induction hypothesis for the continuation
+    congr; funext s
+    cases s
+    · -- Done: pure
+      simp only [forIn'_eq_forIn, Function.comp_apply, simulateQ_pure]
+    · -- Yield: recurse (apply IH)
+      apply ih
+
+/-- Distributes `simulateQ` over `Vector.mapM`.
+
+TODO: This proof is non-trivial because `Vector.mapM` is implemented via an auxiliary
+`mapM.go` function that doesn't decompose cleanly. Attempted approaches:
+- Vector induction produces `insertIdx` terms that don't match `mapM` structure
+- toArray representation doesn't work since we're proving equality of `OracleComp` values
+- Need either: (1) a lemma relating `simulateQ` to Array.mapM, or
+  (2) a custom induction principle, or (3) direct reasoning about `mapM.go`. -/
+lemma simulateQ_vector_mapM {ι ι' : Type} {spec : OracleSpec ι} {superSpec : OracleSpec ι'}
+    (so : SimOracle.Stateless spec superSpec)
+    {α β : Type} {n : ℕ} (f : α → OracleComp spec β) (v : Vector α n) :
+    simulateQ so (Vector.mapM f v) = Vector.mapM (fun x ↦ simulateQ so (f x)) v := by
+  sorry
+
+/--
+When each computation in a `Vector.mapM` returns `pure (f x)`, membership in support means
+equality to `Vector.map f v`.
+
+Note: This relies on `mem_support_vector_mapM` from VCVio which has a sorry.
+-/
+lemma mem_support_vector_mapM_pure {α β : Type} {n : ℕ} {ι : Type} {spec : OracleSpec ι}
+    (f : α → β) (v : Vector α n) (x : Vector β n) :
+    x ∈ (Vector.mapM (fun a ↦ pure (f a) : α → OracleComp spec β) v).support ↔
+    x = Vector.map f v := by
+  constructor
+  · intro h
+    ext i hi : 1
+    have h_elem : x[i] ∈ (pure (f v[i]) : OracleComp spec β).support := by
+      rw [OracleComp.mem_support_vector_mapM] at h
+      exact h ⟨i, hi⟩
+    simp only [OracleComp.support_pure, Set.mem_singleton_iff] at h_elem
+    simp only [Vector.getElem_map, h_elem]
+  · intro h
+    rw [h, OracleComp.mem_support_vector_mapM]
+    intro i
+    simp only [Fin.getElem_fin, support_pure, Vector.getElem_map, Set.mem_singleton_iff]
+
+/--
+Support of Vector.mapM with pure is singleton.
+-/
+lemma support_vector_mapM_pure_eq_singleton {α β : Type} {n : ℕ} {ι : Type} {spec : OracleSpec ι}
+    (f : α → β) (v : Vector α n) :
+    (Vector.mapM (fun a ↦ pure (f a) : α → OracleComp spec β) v).support = {Vector.map f v} := by
+  ext x
+  rw [Set.mem_singleton_iff, mem_support_vector_mapM_pure]
+
+end ForInLemmas
+
+#check liftM_eq_liftComp
+lemma OracleComp.lift_eq_liftM {ι : Type u} {τ : Type v} {spec : OracleSpec ι} {superSpec : OracleSpec τ}
+  {α : Type w} [MonadLift spec.OracleQuery superSpec.OracleQuery] (q : OracleQuery spec α) :
+  OracleComp.lift q = (liftM q) := by rfl
+
+/--
+Collapsing nested lifts:
+Lifting from spec₁ → spec₂ and then spec₂ → spec₃ is the same as
+lifting directly from spec₁ → spec₃.
+-/
+@[simp]
+lemma OracleComp.liftM_liftM {ι₁ ι₂ ι₃ : Type}
+    {spec₁ : OracleSpec ι₁} {spec₂ : OracleSpec ι₂} {spec₃ : OracleSpec ι₃}
+    -- We need lift instances for the steps: 1->2, 2->3, and 1->3
+    [h12 : MonadLift spec₁.OracleQuery spec₂.OracleQuery]
+    [h23 : MonadLift spec₂.OracleQuery spec₃.OracleQuery]
+    [h13 : MonadLift spec₁.OracleQuery spec₃.OracleQuery]
+    -- Requirement: The composition of lifts must match the direct lift
+    (h_comp : ∀ {α} (q : spec₁.OracleQuery α),
+      (liftM (liftM q : spec₂.OracleQuery α) : spec₃.OracleQuery α) = liftM q)
+    {α : Type} (oa : OracleComp spec₁ α) :
+    (liftM (liftM oa : OracleComp spec₂ α) : OracleComp spec₃ α) = liftM oa := by
+  induction oa using OracleComp.inductionOn with
+  | pure x =>
+    -- pure lifts to pure
+    simp only [liftM_eq_liftComp, liftComp_pure]
+  | query_bind i t oa ih =>
+    -- liftM (liftM (query ...))
+    -- = liftM (query_in_2 ...) >>= ...
+    -- = query_in_3 ... >>= ...
+    simp only [liftM_eq_liftComp, liftComp_bind, liftComp_query, SubSpec.liftM_query_eq_liftM_liftM,
+      queryBind_inj]
+    -- The key step: apply the hypothesis that the query lifts match
+    rw [h_comp]
+    simp only [true_and]
+    funext x
+    exact ih x
+  | failure =>
+    simp only [liftM_eq_liftComp, liftComp_failure]
+
+/-- **Oracle query unfolding**: This is the main lemma that converts the OracleComp
+lifted from oracle queries into an almost deterministic form -/
+@[simp]
+lemma simulateQ_simOracle2_lift_liftComp_query_T1
+    {ι : Type} {oSpec : OracleSpec ι}
+    {ι₁ : Type} {T₁ : ι₁ → Type} [∀ i, OracleInterface (T₁ i)]
+    {ι₂ : Type} {T₂ : ι₂ → Type} [∀ i, OracleInterface (T₂ i)]
+    (t₁ : ∀ i, T₁ i) (t₂ : ∀ i, T₂ i)
+    (j : ι₁) (pt : [T₁]ₒ.domain j) :
+    simulateQ (OracleInterface.simOracle2 oSpec t₁ t₂)
+      ((OracleComp.lift (query j pt)).liftComp (oSpec ++ₒ ([T₁]ₒ ++ₒ [T₂]ₒ))) =
+    pure (OracleInterface.answer (t₁ j) pt) := by
+  rfl
+
+/-- **Oracle query unfolding (T2)**: Unfolds a query to the second transcript (T₂)
+lifted into the full specification, resolving it to the deterministic honest answer. -/
+@[simp]
+lemma simulateQ_simOracle2_lift_liftComp_query_T2
+    {ι : Type} {oSpec : OracleSpec ι}
+    {ι₁ : Type} {T₁ : ι₁ → Type} [∀ i, OracleInterface (T₁ i)]
+    {ι₂ : Type} {T₂ : ι₂ → Type} [∀ i, OracleInterface (T₂ i)]
+    (t₁ : ∀ i, T₁ i) (t₂ : ∀ i, T₂ i)
+    (j : ι₂) (pt : [T₂]ₒ.domain j) :
+    simulateQ (OracleInterface.simOracle2 oSpec t₁ t₂)
+      ((OracleComp.lift (query j pt)).liftComp (oSpec ++ₒ ([T₁]ₒ ++ₒ [T₂]ₒ))) =
+    pure (OracleInterface.answer (t₂ j) pt) := by
+  rfl

@@ -179,6 +179,9 @@ lemma challengeTensorExpansion_decompose_succ [CommRing L] (n : ℕ) (r : Fin (n
 variable {L : Type} [CommRing L] (ℓ : ℕ) [NeZero ℓ]
 variable (𝓑 : Fin 2 ↪ L)
 
+abbrev MultilinearPoly (L : Type) [CommSemiring L] (ℓ : ℕ) := L⦃≤ 1⦄[X Fin ℓ]
+abbrev MultiquadraticPoly (L : Type) [CommSemiring L] (ℓ : ℕ) := L⦃≤ 2⦄[X Fin ℓ]
+
 /-- Fixes the first `v` variables of a `ℓ`-variate multivariate polynomial.
 `t` -> `H_i` derivation
 -/
@@ -519,6 +522,21 @@ noncomputable def qMap_total_fiber
         else
           y_coeffs ⟨j.val - steps, by omega⟩  -- Shift indices to match y's basis
       exact basis_x.repr.symm ((Finsupp.equivFunOnFinite).symm x_coeffs)
+
+omit [CharP L 2] [DecidableEq 𝔽q] hF₂ h_β₀_eq_1 [NeZero ℓ] in
+lemma qMap_total_fiber_congr_steps
+    {i : Fin r} (steps steps' : ℕ) {destIdx : Fin r}
+    (h_destIdx : destIdx = i.val + steps)
+    (h_destIdx_le : destIdx ≤ ℓ)
+    (h_steps_eq : steps = steps')
+    (y : sDomain 𝔽q β h_ℓ_add_R_rate (i := destIdx)) :
+    qMap_total_fiber 𝔽q β (i := i) (steps := steps) (h_destIdx := h_destIdx)
+      (h_destIdx_le := h_destIdx_le) (y := y) =
+    fun (x : Fin (2 ^ steps)) ↦
+      qMap_total_fiber 𝔽q β (i := i) (steps := steps') (h_destIdx := by omega)
+        (h_destIdx_le := h_destIdx_le) (y := y)
+        ⟨x.val, by subst h_steps_eq; exact x.is_lt⟩ := by
+  subst h_steps_eq; rfl
 
 /- TODO : state that the fiber of y is the set of all 2 ^ steps points in the
 larger domain S⁽ⁱ⁾ that get mapped to y by the series of quotient maps q⁽ⁱ⁾, ..., q⁽ⁱ⁺steps⁻¹⁾. -/
@@ -936,8 +954,8 @@ vector in the identity in **Lemma 4.9** -/
 def fiberEvaluations (i : Fin r) {destIdx : Fin r} (steps : ℕ)
   (h_destIdx : destIdx = i + steps)
   (h_destIdx_le : destIdx ≤ ℓ)
-    (f : (sDomain 𝔽q β h_ℓ_add_R_rate) i → L)
-    (y : (sDomain 𝔽q β h_ℓ_add_R_rate) destIdx) : Fin (2 ^ steps) → L :=
+  (f : (sDomain 𝔽q β h_ℓ_add_R_rate) i → L)
+  (y : (sDomain 𝔽q β h_ℓ_add_R_rate) destIdx) : Fin (2 ^ steps) → L :=
   -- Get the fiber points
   let fiberMap := qMap_total_fiber 𝔽q β (i := i) (steps := steps) (h_destIdx := h_destIdx)
     (h_destIdx_le := h_destIdx_le) (y := y)
@@ -1347,6 +1365,19 @@ def iterated_fold (i : Fin r) (steps : ℕ) {destIdx : Fin r}
   ⟩
 
 omit [CharP L 2] [DecidableEq 𝔽q] hF₂ h_β₀_eq_1 [NeZero ℓ] in
+/-- **Base Case**: Iterated fold with 0 steps is the identity
+(returning the initial function `f`). -/
+lemma iterated_fold_zero_steps (i : Fin r) {destIdx : Fin r}
+    (h_destIdx : destIdx = i.val) (h_destIdx_le : destIdx ≤ ℓ)
+    (f : sDomain 𝔽q β h_ℓ_add_R_rate (i := i) → L)
+    (r_challenges : Fin 0 → L) :
+    iterated_fold 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate) (i := i) (steps := 0)
+      (h_destIdx := by omega) (h_destIdx_le := h_destIdx_le) (f := f)
+      (r_challenges := r_challenges) = fun y ↦ f (cast (by rw [sDomain_eq_of_eq]; omega) y) := by
+  have h_eq : destIdx = i := by omega
+  subst h_eq; rfl
+
+omit [CharP L 2] [DecidableEq 𝔽q] hF₂ h_β₀_eq_1 [NeZero ℓ] in
 lemma iterated_fold_last (i : Fin r) {midIdx destIdx : Fin r} (steps : ℕ)
   (h_midIdx : midIdx = i + steps) (h_destIdx : destIdx = i + steps + 1) (h_destIdx_le : destIdx ≤ ℓ)
   (f : sDomain 𝔽q β h_ℓ_add_R_rate (i := i) → L) (r_challenges : Fin (steps + 1) → L) :
@@ -1418,15 +1449,6 @@ lemma iterated_fold_congr_steps_index
     (i := i) steps' (by omega) (h_destIdx_le := by omega)
     (f) (fun (cIdx : Fin steps') => r_challenges ⟨cIdx, by omega⟩) (y := y) := by
   subst h_steps_eq_steps'; rfl
-
--- ⊢ iterated_fold 𝔽q β 0 (k_steps + ϑ) ⋯ ⋯
---     (fun y ↦ Polynomial.eval ↑y ↑(polynomialFromNovelCoeffsF₂ 𝔽q β ℓ ⋯ fun ω ↦ (MvPolynomial.eval ↑↑ω) ↑witIn.t))
---     (fun cIdx ↦ stmtIn.challenges ⟨↑cIdx, ⋯⟩) y =
---   iterated_fold 𝔽q β 0 ℓ ⋯ ⋯
---     (fun x ↦
---       Polynomial.eval ↑x ↑(polynomialFromNovelCoeffsF₂ 𝔽q β ℓ ⋯ fun ω ↦ (MvPolynomial.eval (bitsOfIndex ω)) ↑witIn.t))
---     stmtIn.challenges ⟨0, ⋯⟩
-
 
 /--
 Transitivity of iterated_fold : folding for `steps₁` and then for `steps₂`
@@ -1542,6 +1564,54 @@ def single_point_localized_fold_matrix_form (i : Fin r) {destIdx : Fin r} (steps
     -- Matrix-vector multiplication : challenge_vec^T • (fold_mat • fiber_eval_mapping)
     let intermediate_fn := Matrix.mulVec fold_mat fiber_eval_mapping -- rhs Mat-Vec mul
     exact dotProduct challenge_vec intermediate_fn -- vec-vec dot product
+
+omit [CharP L 2] [DecidableEq 𝔽q] hF₂ h_β₀_eq_1 [NeZero ℓ] in
+lemma single_point_localized_fold_matrix_form_congr_source_index
+    {i i' : Fin r} (h : i = i')
+    (steps : ℕ) {destIdx : Fin r}
+    (h_destIdx : destIdx = i.val + steps)
+    (h_destIdx' : destIdx = i'.val + steps)
+    (h_destIdx_le : destIdx ≤ ℓ)
+    (r_challenges : Fin steps → L)
+    (y : sDomain 𝔽q β h_ℓ_add_R_rate (i := destIdx))
+    (fiber_eval_mapping : Fin (2 ^ steps) → L) :
+  single_point_localized_fold_matrix_form 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate)
+    i steps h_destIdx h_destIdx_le r_challenges y fiber_eval_mapping =
+  single_point_localized_fold_matrix_form 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate)
+    i' steps h_destIdx' h_destIdx_le r_challenges y fiber_eval_mapping := by
+  subst h; rfl
+
+omit [CharP L 2] [DecidableEq 𝔽q] hF₂ h_β₀_eq_1 [NeZero ℓ] in
+lemma single_point_localized_fold_matrix_form_congr_dest_index
+    {i : Fin r} (steps : ℕ) {destIdx destIdx' : Fin r}
+    (h_destIdx : destIdx = i.val + steps)
+    (h_destIdx_le : destIdx ≤ ℓ) (h_destIdx_eq_destIdx' : destIdx = destIdx')
+    (r_challenges : Fin steps → L)
+    (y : sDomain 𝔽q β h_ℓ_add_R_rate (i := destIdx))
+    (fiber_eval_mapping : Fin (2 ^ steps) → L) :
+  single_point_localized_fold_matrix_form 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate)
+    i steps h_destIdx h_destIdx_le r_challenges y fiber_eval_mapping =
+  single_point_localized_fold_matrix_form 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate)
+    i steps (destIdx := destIdx') (by omega) (by omega) r_challenges
+    (cast (by rw [h_destIdx_eq_destIdx']) y) fiber_eval_mapping := by
+  subst h_destIdx_eq_destIdx'; rfl
+
+omit [CharP L 2] [DecidableEq 𝔽q] hF₂ h_β₀_eq_1 [NeZero ℓ] in
+lemma single_point_localized_fold_matrix_form_congr_steps_index
+    {i : Fin r} (steps steps' : ℕ) {destIdx : Fin r}
+    (h_destIdx : destIdx = i.val + steps)
+    (h_destIdx_le : destIdx ≤ ℓ) (h_steps_eq_steps' : steps = steps')
+    (r_challenges : Fin steps → L)
+    (y : sDomain 𝔽q β h_ℓ_add_R_rate (i := destIdx))
+    (fiber_eval_mapping : Fin (2 ^ steps) → L) :
+  single_point_localized_fold_matrix_form 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate)
+    i steps h_destIdx h_destIdx_le r_challenges y fiber_eval_mapping =
+  single_point_localized_fold_matrix_form 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate)
+    i steps' (by omega) h_destIdx_le
+    (fun k ↦ r_challenges ⟨k, by omega⟩)
+    y
+    (fun k ↦ fiber_eval_mapping ⟨k, by subst h_steps_eq_steps'; exact k.is_lt⟩) := by
+  subst h_steps_eq_steps'; rfl
 
 /-- **From Lemma 4.9**: Matrix-vector multiplication form of iterated fold :
 For a local `steps > 0`, `∀ i ∈ {0, ..., l-steps}`, `y ∈ S^(i+steps)`,
@@ -2082,12 +2152,74 @@ theorem iterated_fold_advances_evaluation_poly
         conv_rhs => rw [←two_mul (n := 2 ^ s), ←mul_assoc]
         omega
 
+omit [DecidableEq L] [CharP L 2] [DecidableEq 𝔽q] h_Fq_char_prime
+  hF₂ hβ_lin_indep h_β₀_eq_1 [NeZero ℓ] [NeZero 𝓡] in
+lemma constantIntermediateEvaluationPoly_eval_eq_const
+  (destIdx : Fin r) (coeffs : Fin (2 ^ (ℓ - destIdx.val)) → L)
+  (h_destIdx : destIdx.val = ℓ) (x y : L) :
+  let P := intermediateEvaluationPoly 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate)
+    (i := destIdx) (h_i := by omega) coeffs
+  P.eval x = P.eval y := by
+    intro P
+    -- intermediateEvaluationPoly is a sum over Fin 1, which is just one term
+    dsimp only [P, intermediateEvaluationPoly]
+    rw [Finset.sum_eq_single (a := ⟨0, by
+      simp only [Nat.ofNat_pos, pow_pos]⟩) (h₀ := fun j hj hj_ne => by
+      have h_j_lt := j.isLt
+      simp only [h_destIdx, tsub_self, pow_zero, Nat.lt_one_iff,
+        Fin.val_eq_zero_iff] at h_j_lt -- j = 0
+      simp only [Fin.mk_zero', ne_eq] at hj_ne
+      exfalso; exact hj_ne h_j_lt
+    ) (h₁ := fun h => by
+      simp only [Fin.mk_zero', Finset.mem_univ, not_true_eq_false] at h)]
+    -- By intermediateNovelBasisX_zero_eq_one, intermediateNovelBasisX ... 0 = 1
+    rw [intermediateNovelBasisX_zero_eq_one 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate)
+      (i := destIdx) (h_i := by omega)]
+    -- So P = C (coeffs 0), which is constant
+    simp only [Polynomial.eval_C, mul_one]
+
+omit [CharP L 2] in
+/-- When folding from level 0 all the way to level ℓ, the resulting function is constant. -/
+lemma iterated_fold_to_level_ℓ_is_constant
+    (t : MultilinearPoly L ℓ) (destIdx : Fin r) (h_destIdx : destIdx.val = ℓ)
+    (challenges : Fin ℓ → L) :
+    let P₀: L[X]_(2 ^ ℓ) := polynomialFromNovelCoeffsF₂ 𝔽q β ℓ (by omega)
+      (fun ω => t.val.eval (bitsOfIndex ω))
+    let f₀ := polyToOracleFunc 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate) (domainIdx := 0) (P := P₀)
+    let f_ℓ := iterated_fold 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate) (i := 0) (steps := ℓ)
+      (destIdx := destIdx)
+      (h_destIdx := by simp only [Fin.coe_ofNat_eq_mod, Nat.zero_mod, zero_add]; omega)
+      (h_destIdx_le := by omega)
+      f₀ challenges
+    ∀ x y, f_ℓ x = f_ℓ y := by
+  intro P₀ f₀ f_ℓ x y
+  let coeffs := fun (ω : Fin (2 ^ ℓ)) => t.val.eval (bitsOfIndex ω)
+  have h_f_ℓ_eq_poly := iterated_fold_advances_evaluation_poly 𝔽q β
+    (h_ℓ_add_R_rate := h_ℓ_add_R_rate) (i := 0) (steps := ℓ) (destIdx := destIdx)
+    (h_destIdx := by simp only [Fin.coe_ofNat_eq_mod, Nat.zero_mod, zero_add]; omega)
+    (h_destIdx_le := by omega) (coeffs := coeffs) (r_challenges := challenges)
+  -- h_f_ℓ_eq_poly says: f_ℓ = polyToOracleFunc P_ℓ where
+    -- P_ℓ = intermediateEvaluationPoly with new_coeffs
+  -- Step 2: When destIdx = ℓ, we have ℓ - ℓ = 0, so new_coeffs : Fin (2^0) = Fin 1 → L
+  -- This means P_ℓ is a constant polynomial (only one coefficient)
+  dsimp only [f_ℓ, f₀, P₀, polynomialFromNovelCoeffsF₂]
+  -- unfold polyToOracleFunc
+  rw [←intermediate_poly_P_base 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate) (h_ℓ := by omega)]
+  simp only at h_f_ℓ_eq_poly;
+  rw [h_f_ℓ_eq_poly]
+  -- f_ℓ x = polyToOracleFunc P_ℓ x = P_ℓ.eval x.val
+  -- Since P_ℓ is constant, P_ℓ.eval x.val = P_ℓ.eval 0 for all x
+  -- We need to show that intermediateEvaluationPoly with Fin 1 coefficients is constant
+  dsimp only [polyToOracleFunc]
+  rw [constantIntermediateEvaluationPoly_eval_eq_const]
+  omega
+
 end FoldTheory
 
 /-- Given a point `v ∈ S^(0)`, extract the middle `steps` bits `{v_i, ..., v_{i+steps-1}}`
 as a `Fin (2 ^ steps)`. -/
 def extractMiddleFinMask (v : (sDomain 𝔽q β h_ℓ_add_R_rate) ⟨0, by exact pos_of_neZero r⟩)
-    (i : Fin ℓ) (steps : ℕ) : Fin (2 ^ steps) := by
+    (i : Fin r) (steps : ℕ) : Fin (2 ^ steps) := by
   let vToFin := AdditiveNTT.sDomainToFin 𝔽q β h_ℓ_add_R_rate ⟨0, by
     exact pos_of_neZero r⟩ (by simp only [add_pos_iff]; left; exact pos_of_neZero ℓ) v
   simp only [tsub_zero] at vToFin

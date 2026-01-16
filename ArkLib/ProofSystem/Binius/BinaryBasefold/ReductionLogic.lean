@@ -7,6 +7,7 @@ import ArkLib.ProofSystem.Binius.BinaryBasefold.Spec
 import ArkLib.ToVCVio.Oracle
 import ArkLib.ToVCVio.Execution
 import ArkLib.OracleReduction.Completeness
+import ArkLib.Data.Misc.Basic
 
 set_option maxHeartbeats 400000  -- Increase if needed
 set_option profiler true
@@ -122,6 +123,115 @@ def ReductionLogicStep.IsStronglyComplete
       step.proverOut stmtIn witIn oStmtIn transcript
 
     -- Conclusion A: The Prover's output satisfies the next relation (Soundness/Completeness)
+    step.completeness_relOut ((verifierStmtOut, verifierOStmtOut), proverWitOut) ∧
+
+    -- Conclusion B: The Prover and Verifier agree on the next statement
+    proverStmtOut = verifierStmtOut ∧
+
+    -- Conclusion C: The Prover and Verifier agree on the oracle statements
+    proverOStmtOut = verifierOStmtOut
+
+/-- Oracle-aware reduction logic step for protocols where the verifier queries oracles
+during verification (e.g., QueryPhase in Binary Basefold).
+
+Unlike `ReductionLogicStep` where `verifierCheck` is a pure `Prop`, here it returns
+`OracleComp (oSpec ++ₒ ([OracleIn]ₒ ++ₒ [pSpec.Message]ₒ)) StmtOut` to support oracle
+queries during verification. This matches the signature of `OracleVerifier.verify`.
+
+All other components (embed, hEq, relations, proverOut, verifierOut) remain pure,
+giving definitional equality when accessed via dot notation. -/
+structure OracleAwareReductionLogicStep
+    {ι : Type} (oSpec : OracleSpec ι)
+    (StmtIn WitIn : Type)
+    {ιₒᵢ ιₒₒ : Type}
+    (OracleIn : ιₒᵢ → Type) (OracleOut : ιₒₒ → Type)
+    (StmtOut WitOut : Type)
+    {n : ℕ} (pSpec : ProtocolSpec n)
+    [Oₛᵢ : ∀ i, OracleInterface (OracleIn i)]
+    [Oₘ : ∀ i, OracleInterface (pSpec.Message i)] where
+
+  -- 1. The Specification (Relations) - same as ReductionLogicStep
+  completeness_relIn : (StmtIn × (∀ i, OracleIn i)) × WitIn → Prop
+  completeness_relOut : (StmtOut × (∀ i, OracleOut i)) × WitOut → Prop
+
+  -- 2. The Verifier (Oracle-Aware)
+  -- Key difference: verifierCheck is monadic, can query oracles
+  -- Uses the extended spec: oSpec ++ₒ ([OracleIn]ₒ ++ₒ [pSpec.Message]ₒ)
+  -- Same signature as OracleVerifier.verify
+  verifierCheck : StmtIn → FullTranscript pSpec →
+    OracleComp (oSpec ++ₒ ([OracleIn]ₒ ++ₒ [pSpec.Message]ₒ)) StmtOut
+  -- Output computation remains pure/deterministic
+  verifierOut   : StmtIn → FullTranscript pSpec → StmtOut
+
+  -- 2b. Oracle Embedding (same as ReductionLogicStep)
+  embed : ιₒₒ ↪ ιₒᵢ ⊕ pSpec.MessageIdx
+  hEq : hEq (OracleIn := OracleIn) (OracleOut := OracleOut) (ιₒᵢ := ιₒᵢ) (ιₒₒ := ιₒₒ)
+    (pSpec := pSpec) (embed := embed)
+
+  -- 3. The Honest Prover (Pure Logic) - same as ReductionLogicStep
+  honestTranscript : StmtIn → WitIn → (∀ i, OracleIn i) → pSpec.Challenges → FullTranscript pSpec
+
+  -- 4. The Prover's Output State - same as ReductionLogicStep
+  proverOut : StmtIn → WitIn → (∀ i, OracleIn i) → FullTranscript pSpec →
+    ((StmtOut × (∀ i, OracleOut i)) × WitOut)
+
+/-- Strong Completeness Under Simulation for Oracle-Aware Reduction Logic:
+  \"For ANY set of challenges, when the verifier check is run under honest oracle simulation,
+   it succeeds with probability 1, and the output satisfies the relation.\"
+
+  This is the appropriate notion of completeness for verifiers that query oracles during
+  verification (e.g., the query phase in Binary Basefold). Unlike `IsStronglyComplete`,
+  which checks the raw `OracleComp`, this checks the simulated execution where oracle
+  queries are answered by the honest oracle statements.
+
+  The key difference: In raw execution, oracle queries return arbitrary values, so guards
+  checking oracle responses will fail. Under simulation with `simOracle2`, queries are
+  answered by `oStmtIn`, making the guards pass.
+
+  **Type Constraint**: The step's `querySpec` must be `oSpec ++ₒ ([OracleIn]ₒ ++ₒ [pSpec.Message]ₒ)`
+  for the simulation to type-check. This is the natural structure where:
+  - `oSpec` is the shared/base oracle (e.g., random oracle, hash function)
+  - `[OracleIn]ₒ` are the oracle statements the verifier can query
+  - `[pSpec.Message]ₒ` are the prover messages the verifier can query -/
+@[reducible]
+def OracleAwareReductionLogicStep.IsStronglyCompleteUnderSimulation
+    {ι : Type} {oSpec : OracleSpec ι} [oSpec.FiniteRange]
+    {StmtIn WitIn : Type}
+    {ιₒᵢ ιₒₒ : Type} {OracleIn : ιₒᵢ → Type} {OracleOut : ιₒₒ → Type}
+    {StmtOut WitOut : Type}
+    {n : ℕ} {pSpec : ProtocolSpec n}
+    [Oₛᵢ : ∀ i, OracleInterface (OracleIn i)]
+    [Oₘ : ∀ i, OracleInterface (pSpec.Message i)]
+    -- The step uses oSpec as its base oracle; internally it accesses oSpec ++ₒ ([OracleIn]ₒ ++ₒ [pSpec.Message]ₒ)
+    (step : OracleAwareReductionLogicStep oSpec
+      StmtIn WitIn OracleIn OracleOut StmtOut WitOut pSpec) : Prop :=
+  ∀ (stmtIn : StmtIn) (witIn : WitIn) (oStmtIn : ∀ i, OracleIn i) (challenges : pSpec.Challenges),
+
+    -- Assumption: The input relation holds (valid start state)
+    (h_relIn : step.completeness_relIn ((stmtIn, oStmtIn), witIn)) →
+
+    -- 1. Generate the Honest Transcript (Deterministic given challenges)
+    let transcript := step.honestTranscript stmtIn witIn oStmtIn challenges
+
+    -- 2. Define the honest oracle simulator
+    -- simOracle2 oSpec t₁ t₂ : SimOracle.Stateless (oSpec ++ₒ ([T₁]ₒ ++ₒ [T₂]ₒ)) oSpec
+    -- This answers queries to OracleIn using oStmtIn and queries to Messages using transcript
+    let so := OracleInterface.simOracle2 oSpec oStmtIn transcript.messages
+
+    -- 3. The Verifier check under simulation MUST succeed with probability 1
+    [⊥ | simulateQ so (step.verifierCheck stmtIn transcript)] = 0 ∧
+
+    -- 4. The output MUST be valid and consistent
+    let verifierStmtOut := step.verifierOut stmtIn transcript
+
+    -- Compute verifier oracle output via embedding (like OracleVerifier.toVerifier)
+    let verifierOStmtOut := OracleVerifier.mkVerifierOStmtOut step.embed step.hEq
+      oStmtIn transcript
+
+    let ((proverStmtOut, proverOStmtOut), proverWitOut) :=
+      step.proverOut stmtIn witIn oStmtIn transcript
+
+    -- Conclusion A: The Prover's output satisfies the next relation
     step.completeness_relOut ((verifierStmtOut, verifierOStmtOut), proverWitOut) ∧
 
     -- Conclusion B: The Prover and Verifier agree on the next statement
@@ -431,18 +541,6 @@ def commitStepLogic (i : Fin ℓ) (hCR : isCommitmentRound ℓ ϑ i) :
       -- (hEq := (commitStepHEq 𝔽q β (ϑ := ϑ) (h_ℓ_add_R_rate := h_ℓ_add_R_rate) i hCR))
       -- oStmtIn transcript
     ((stmt, oStmtOut), wit)
-
-
-/-- Generic lemma: casting a function equals the function that casts its argument.
-Given types `A`, `B` with `h : A = B`, and a function `f : A → C`, this shows:
-`cast (congrArg (· → C) h) f = fun x => f (cast h.symm x)`
-
-This is useful when you need to switch between casting the function type vs casting the argument. -/
-lemma cast_fun_eq_fun_cast_arg.{u, v} {A B : Type u} {C : Type v} (h : A = B) (f : A → C) :
-    cast (congrArg (· → C) h) f = fun x => f (cast h.symm x) := by
-  funext x
-  subst h
-  rfl
 
 omit [CharP L 2] [SelectableType L] in
 set_option profiler.threshold 1 in
@@ -870,29 +968,6 @@ def finalSumcheckStepLogic :
   ⟩
   hEq := fun oracleIdx => by simp only [Fin.eta]
 
-lemma fun_eta_expansion {α β : Type*} (f : α → β) : f = (fun x => f x) := rfl
-
-private lemma constantIntermediateEvaluationPoly_eval_eq_const
-  (coeffs : Fin (2 ^ (ℓ - ℓ)) → L) (x y : L) :
-  let P := intermediateEvaluationPoly 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate) (i := ⟨ℓ, by omega⟩) (h_i := by simp only [le_refl]) coeffs
-  P.eval x = P.eval y := by
-    intro P
-    -- intermediateEvaluationPoly is a sum over Fin 1, which is just one term
-    dsimp only [P, intermediateEvaluationPoly]
-    rw [Finset.sum_eq_single (a := ⟨0, by
-      simp only [tsub_self, pow_zero, zero_lt_one]⟩) (h₀ := fun j hj hj_ne => by
-      have h_j_lt := j.isLt
-      simp only [tsub_self, pow_zero, Nat.lt_one_iff, Fin.val_eq_zero_iff] at h_j_lt
-      simp only [Fin.mk_zero', ne_eq] at hj_ne
-      exfalso; exact hj_ne h_j_lt
-    ) (h₁ := fun h => by
-      simp only [Fin.mk_zero', mem_univ, not_true_eq_false] at h)]
-    -- By intermediateNovelBasisX_zero_eq_one, intermediateNovelBasisX ... 0 = 1
-    rw [intermediateNovelBasisX_zero_eq_one 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate)
-      (i := ⟨ℓ, by omega⟩) (h_i := by simp only [le_refl])]
-    -- So P = C (coeffs 0), which is constant
-    simp only [Polynomial.eval_C, mul_one]
-
 /-- **Strict version**: When folding the last oracle to level `ℓ` (final sumcheck),
 the iterated fold of the last oracle equals the constant function.
 
@@ -1125,30 +1200,9 @@ lemma iterated_fold_to_const_strict
       (h_destIdx := by simp only [Fin.val_last, Fin.coe_ofNat_eq_mod, Nat.zero_mod, zero_add];)
       (h_destIdx_le := by simp only [Fin.val_last, le_refl]) (f := f₀) (r_challenges := stmtIn.challenges)
     have h_eval_eq : ∀ x, f_ℓ x = f_ℓ ⟨0, by simp only [zero_mem]⟩ := by
-      -- Step 1: Use iterated_fold_advances_evaluation_poly to show f_ℓ is evaluation of P_ℓ
-      let coeffs := fun (ω : Fin (2 ^ ℓ)) => witIn.t.val.eval (bitsOfIndex ω)
-      have h_f_ℓ_eq_poly := iterated_fold_advances_evaluation_poly 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate)
-        (i := 0) (steps := ℓ) (destIdx := ⟨Fin.last ℓ, by omega⟩)
-        (h_destIdx := by simp only [Fin.val_last, Fin.coe_ofNat_eq_mod, Nat.zero_mod, zero_add])
-        (h_destIdx_le := by simp only [Fin.val_last, le_refl])
-        (coeffs := coeffs) (r_challenges := stmtIn.challenges)
-      -- h_f_ℓ_eq_poly says: f_ℓ = polyToOracleFunc P_ℓ where P_ℓ = intermediateEvaluationPoly with new_coeffs
-      -- Step 2: When destIdx = ℓ, we have ℓ - ℓ = 0, so new_coeffs : Fin (2^0) = Fin 1 → L
-      -- This means P_ℓ is a constant polynomial (only one coefficient)
       intro x
-      dsimp only [f_ℓ, f₀, P₀, polynomialFromNovelCoeffsF₂]
-      -- unfold polyToOracleFunc
-      rw [←intermediate_poly_P_base 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate) (h_ℓ := by omega)]
-      simp only at h_f_ℓ_eq_poly;
-      rw [h_f_ℓ_eq_poly]
-      -- f_ℓ x = polyToOracleFunc P_ℓ x = P_ℓ.eval x.val
-      -- Since P_ℓ is constant, P_ℓ.eval x.val = P_ℓ.eval 0 for all x
-      -- We need to show that intermediateEvaluationPoly with Fin 1 coefficients is constant
-      dsimp only [polyToOracleFunc]
-      simp only [Fin.val_last]
-      rw [constantIntermediateEvaluationPoly_eval_eq_const]
-    rw [h_eval_eq]
-    rfl
+      apply iterated_fold_to_level_ℓ_is_constant 𝔽q β (h_ℓ_add_R_rate := h_ℓ_add_R_rate) (t := witIn.t) (destIdx := ⟨Fin.last ℓ, by omega⟩) (h_destIdx := by simp only [Fin.val_last]) (challenges := stmtIn.challenges) (x := x) (y := 0)
+    rw [h_eval_eq]; rfl
   rw [h_eq]
   intro y
   rfl
